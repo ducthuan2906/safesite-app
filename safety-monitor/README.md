@@ -90,11 +90,15 @@ tests/             bộ giả lập + kịch bản kiểm thử
 
 COCO **không có** lớp forklift/excavator; bản mặc định dùng car/truck/bus/motorcycle/bicycle. Để dùng trong kho/công trường:
 
+1. Đặt ảnh và nhãn (định dạng YOLO) vào `data/construction/` theo cấu trúc ghi trong [construction.yaml](construction.yaml): `images/train`, `images/val`, `labels/train`, `labels/val`. Chỉ gán nhãn phương tiện, người đã có mô hình pose lo. Có thể gán nhãn bằng Roboflow, CVAT hoặc Label Studio rồi xuất ra định dạng *YOLO*. Thư mục này không được commit lên git.
+2. Sửa danh sách `names` trong `construction.yaml` nếu dùng bộ lớp khác (mặc định 11 lớp: forklift, excavator, wheel_loader, …).
+3. Huấn luyện:
+
 ```bash
 yolo detect train model=yolo11n.pt data=construction.yaml epochs=50 imgsz=640
 ```
 
-Sau đó đặt đường dẫn `best.pt` vào *Cài đặt → Mô hình phát hiện xe* và sửa `VEHICLE_CLASSES`, `CLASS_HEIGHT_M` trong `app/config.py` theo tên lớp mới.
+Sau đó đặt đường dẫn `runs/detect/train/weights/best.pt` vào *Cài đặt → Mô hình phát hiện xe* và sửa `VEHICLE_CLASSES`, `CLASS_HEIGHT_M` trong `app/config.py` theo chỉ số và tên lớp mới. Ví dụ với bộ lớp mặc định: `VEHICLE_CLASSES = {0: "forklift", 1: "excavator", ..., 10: "truck"}`.
 
 ## 7. Giới hạn đã biết
 
