@@ -1,0 +1,11 @@
+__pycache__/
+*.pt
+data/events.db
+data/settings.json
+data/cameras.json
+data/snapshots/*
+data/clips/*
+data/uploads/*
+data/eval/
+data/bytetrack_safety.yaml
+!data/**/.gitkeep
