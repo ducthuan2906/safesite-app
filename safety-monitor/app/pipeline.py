@@ -65,9 +65,78 @@ class Detector:
         return out
 
 
+def is_network(source) -> bool:
+    return isinstance(source, str) and "://" in source
+
+
 def open_source(source) -> cv2.VideoCapture:
-    src = int(source) if isinstance(source, str) and source.isdigit() else source
-    return cv2.VideoCapture(src)
+    if isinstance(source, str) and source.isdigit():
+        return cv2.VideoCapture(int(source))
+    if is_network(source):
+        # camera mạng: không chờ quá 5 s khi mở/đọc (mặc định FFmpeg chờ 30 s)
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG,
+                               [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return cap
+    return cv2.VideoCapture(source)
+
+
+class LiveReader:
+    """Đọc camera trực tiếp trong luồng riêng và chỉ giữ khung mới nhất: khi phân tích
+    chậm hơn tốc độ camera, khung cũ bị bỏ thay vì xếp hàng gây trễ dồn.
+    Camera mạng (http/rtsp) tự kết nối lại khi rớt."""
+
+    retry_delay = 1.0             # giây chờ giữa hai lần kết nối lại
+
+    def __init__(self, source):
+        self.source = source
+        self.cap = open_source(source)
+        self.cond = threading.Condition()
+        self.frame: Optional[np.ndarray] = None
+        self.t = 0.0              # thời điểm nhận khung (time.monotonic)
+        self.seq = 0
+        self.dead = False         # hết hình và không kết nối lại được (webcam USB bị rút)
+        self._stop = threading.Event()
+        # camera mạng chưa mở được (điện thoại chưa phát hình) vẫn chạy luồng để thử lại
+        if self.isOpened():
+            threading.Thread(target=self._loop, daemon=True).start()
+
+    def isOpened(self) -> bool:
+        return is_network(self.source) or self.cap.isOpened()
+
+    def get(self, prop) -> float:
+        return self.cap.get(prop)
+
+    def _loop(self) -> None:
+        cap = self.cap
+        while not self._stop.is_set():
+            ok, frame = cap.read()
+            if ok:
+                with self.cond:
+                    self.frame, self.t, self.seq = frame, time.monotonic(), self.seq + 1
+                    self.cond.notify_all()
+                continue
+            if not is_network(self.source):
+                break
+            cap.release()
+            self._stop.wait(self.retry_delay)
+            cap = open_source(self.source)
+        cap.release()
+        with self.cond:
+            self.dead = True
+            self.cond.notify_all()
+
+    def read(self, last_seq: int, timeout: float = 0.5):
+        """Chờ khung mới hơn last_seq. Trả về (seq, frame, t); frame = None nếu hết giờ chờ."""
+        with self.cond:
+            self.cond.wait_for(lambda: self.seq > last_seq or self.dead, timeout)
+            if self.seq > last_seq:
+                return self.seq, self.frame, self.t
+            return last_seq, None, 0.0
+
+    def release(self) -> None:
+        self._stop.set()
+
 
 
 class CameraWorker(threading.Thread):
@@ -115,8 +184,9 @@ class CameraWorker(threading.Thread):
     def _run(self) -> None:
         src = self.cam["source"]
         is_file = self.cam.get("source_type") == "file"
-        cap = open_source(src)
+        cap = open_source(src) if is_file else LiveReader(src)
         if not cap.isOpened():
+            cap.release()
             self.status, self.error = "error", f"Không mở được nguồn video: {src}"
             return
         src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -127,23 +197,22 @@ class CameraWorker(threading.Thread):
         self.status = "running"
         clips = ClipRecorder(self.s.pipeline.clip_pre, self.s.pipeline.clip_post)
         idx, wall0, last_t, t_hist = 0, time.monotonic(), -1e9, []
+        seq, last_frame = 0, time.monotonic()
         while not self.stop_flag.is_set():
-            step = max(1, int(round(src_fps / self.s.pipeline.process_fps))) if is_file else 1
-            ok, frame = cap.read()
-            if not ok:
-                if is_file and self.cam.get("loop"):
-                    cap.release()
-                    cap = open_source(src)
-                    idx, wall0 = 0, time.monotonic()
-                    detector = Detector(self.s)
-                    self.engine = None
-                    continue
-                self.status = "finished" if is_file else "error"
-                if not is_file:
-                    self.error = "Mất kết nối camera"
-                break
-            idx += 1
             if is_file:
+                step = max(1, int(round(src_fps / self.s.pipeline.process_fps)))
+                ok, frame = cap.read()
+                if not ok:
+                    if self.cam.get("loop"):
+                        cap.release()
+                        cap = open_source(src)
+                        idx, wall0 = 0, time.monotonic()
+                        detector = Detector(self.s)
+                        self.engine = None
+                        continue
+                    self.status = "finished"
+                    break
+                idx += 1
                 if (idx - 1) % step:
                     continue
                 t = (idx - 1) / src_fps
@@ -154,7 +223,18 @@ class CameraWorker(threading.Thread):
                     if lag > 0:
                         time.sleep(lag)
             else:
-                t = time.monotonic() - wall0
+                seq, frame, t_cap = cap.read(seq)
+                if frame is None:
+                    if cap.dead:
+                        self.status, self.error = "error", "Mất kết nối camera"
+                        break
+                    if time.monotonic() - last_frame > 3.0:
+                        self.status, self.error = "reconnecting", "Không nhận được hình – đang kết nối lại"
+                    continue
+                last_frame = time.monotonic()
+                if self.status == "reconnecting":
+                    self.status, self.error = "running", ""
+                t = t_cap - wall0     # dùng thời điểm nhận khung, không phải lúc xử lý xong
                 if t - last_t < 1.0 / self.s.pipeline.process_fps:
                     continue
             last_t = t

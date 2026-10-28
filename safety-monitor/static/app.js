@@ -15,7 +15,7 @@ const LABELS = {
 };
 const SEV = { critical: "Nghiêm trọng", warning: "Cảnh báo" };
 const STATUS = { new: "Mới", ack: "Đã xác nhận", false_alarm: "Báo nhầm", resolved: "Đã xử lý" };
-const CAM_STATUS = { running: "Đang chạy", starting: "Đang khởi động", stopped: "Đã dừng", finished: "Hết video", error: "Lỗi" };
+const CAM_STATUS = { running: "Đang chạy", starting: "Đang khởi động", reconnecting: "Đang kết nối lại", stopped: "Đã dừng", finished: "Hết video", error: "Lỗi" };
 const GROUND = { homography: "Đã hiệu chỉnh", "auto-perspective": "Tự ước lượng (phối cảnh)", "auto-scale": "Tự ước lượng (tỉ lệ)" };
 const DETAIL_LABELS = {
   torso_angle: "Góc thân (°)", fall_speed: "Tốc độ rơi (H/s)", height_ratio: "Tỉ lệ chiều cao", reason: "Lý do",
@@ -84,10 +84,11 @@ function renderTiles() {
       ? `<span>${rt.fps} FPS</span><span>👷 ${rt.persons ?? 0}</span><span>🚚 ${rt.vehicles ?? 0}</span><span title="${GROUND[rt.ground?.mode] || ""}">${rt.ground?.mode === "homography" ? "📐 đã hiệu chỉnh" : "📐 tự động"}</span>`
       : `<span>${esc(rt.error || "")}</span>`;
     $(".bar i", t).style.width = c.source_type === "file" ? (100 * (rt.progress || 0)).toFixed(1) + "%" : "0";
-    const msg = $(".msg", t), live = rt.status === "running" || rt.status === "starting";
+    const msg = $(".msg", t), live = ["running", "starting", "reconnecting"].includes(rt.status);
     msg.style.display = live ? "none" : "grid";
     if (!live) msg.innerHTML = `<div><div>${CAM_STATUS[rt.status] || "Đã dừng"}${rt.error ? " – " + esc(rt.error) : ""}</div><button class="btn sm" data-start style="margin-top:8px">▶ Chạy</button></div>`;
     else if (rt.status === "starting") { msg.style.display = "grid"; msg.innerHTML = "<div>Đang tải mô hình…</div>"; }
+    else if (rt.status === "reconnecting") { msg.style.display = "grid"; msg.innerHTML = "<div>Mất hình – đang kết nối lại camera…</div>"; }
     const img = $("img", t);
     if (rt.status === "running" && img.dataset.live !== "1") { img.src = `/api/cameras/${c.id}/stream?ts=${Date.now()}`; img.dataset.live = "1"; }
     if (rt.status !== "running") img.dataset.live = "0";
@@ -224,12 +225,12 @@ $("#c-add").onclick = async () => {
 };
 function renderCamRows() {
   $("#cam-rows").innerHTML = state.cams.map((c) => {
-    const rt = c.runtime || {}, run = rt.status === "running" || rt.status === "starting";
+    const rt = c.runtime || {}, run = ["running", "starting", "reconnecting"].includes(rt.status);
     return `<tr data-id="${c.id}"><td><b>${esc(c.name)}</b></td><td class="hint">${esc(c.source_type)} · ${esc(c.source.split(/[\\/]/).pop())}</td>
       <td><span class="chip ${rt.status}">${CAM_STATUS[rt.status] || rt.status}</span> <span class="hint">${esc(rt.error || "")}</span></td>
       <td>${c.calibration ? "Đã hiệu chỉnh" : (GROUND[rt.ground?.mode] || "Tự động")}</td>
       <td class="row"><button class="btn sm" data-act="${run ? "stop" : "start"}">${run ? "Dừng" : "Chạy"}</button>
-      <button class="btn sm" data-act="calib">Hiệu chỉnh</button><button class="btn sm danger" data-act="del">Xóa</button></td></tr>`;
+      <button class="btn sm" data-act="edit">Sửa</button><button class="btn sm" data-act="calib">Hiệu chỉnh</button><button class="btn sm danger" data-act="del">Xóa</button></td></tr>`;
   }).join("") || `<tr><td colspan="5" class="empty">Chưa có camera</td></tr>`;
 }
 $("#cam-rows").addEventListener("click", async (e) => {
@@ -239,8 +240,37 @@ $("#cam-rows").addEventListener("click", async (e) => {
   if (b.dataset.act === "stop") await api(`/api/cameras/${id}/stop`, { method: "POST" });
   if (b.dataset.act === "del" && confirm("Xóa camera này?")) await api(`/api/cameras/${id}`, { method: "DELETE" });
   if (b.dataset.act === "calib") return openCalib(id);
+  if (b.dataset.act === "edit") return openEdit(id);
   state.cams = await api("/api/cameras"); renderCamRows(); renderTiles();
 });
+
+// ------------------------------------------------------------------ sửa camera
+let editId = null;
+function openEdit(id) {
+  const c = state.cams.find((x) => x.id === id); if (!c) return;
+  const file = c.source_type === "file";
+  editId = id;
+  $("#e-name").value = c.name;
+  $("#e-type").value = file ? "rtsp" : c.source_type;
+  $("#e-src").value = c.source;
+  $("#e-loop").checked = !!c.loop; $("#e-auto").checked = !!c.autostart;
+  // file video: chỉ sửa tên/tùy chọn, muốn đổi video thì thêm camera mới
+  $("#e-type-wrap").style.display = $("#e-src-wrap").style.display = file ? "none" : "";
+  $("#e-loop-wrap").style.display = file ? "" : "none";
+  $("#e-hint").style.display = file ? "none" : "";
+  $("#e-msg").textContent = "";
+  $("#m-cam").classList.add("open");
+}
+$("#e-save").onclick = async () => {
+  const c = state.cams.find((x) => x.id === editId); if (!c) return;
+  const body = { name: $("#e-name").value, loop: $("#e-loop").checked, autostart: $("#e-auto").checked };
+  if (c.source_type !== "file") { body.source_type = $("#e-type").value; body.source = $("#e-src").value; }
+  try {
+    await api(`/api/cameras/${editId}`, { method: "PUT", body: JSON.stringify(body) });
+    $("#m-cam").classList.remove("open");
+    state.cams = await api("/api/cameras"); renderCamRows(); renderTiles();
+  } catch (err) { $("#e-msg").textContent = "Lỗi: " + err.message; }
+};
 
 // ------------------------------------------------------------------ hiệu chỉnh
 const cal = { id: null, pts: [] };

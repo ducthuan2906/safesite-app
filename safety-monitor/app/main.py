@@ -52,6 +52,14 @@ def start_worker(cid: str) -> None:
     w.start()
 
 
+def restart_worker(cid: str) -> None:
+    old = workers.pop(cid, None)
+    if old:
+        old.stop()
+        old.join(timeout=5.0)   # luồng cũ dừng sau khung đang xử lý
+    start_worker(cid)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     load_settings()
@@ -124,6 +132,44 @@ def cam_stop(cid: str):
     if w:
         w.stop()
     return {"ok": True}
+
+
+SOURCE_TYPES = {"file", "webcam", "rtsp"}
+
+
+class CameraPatch(BaseModel):
+    name: Optional[str] = None
+    source_type: Optional[str] = None
+    source: Optional[str] = None
+    loop: Optional[bool] = None
+    autostart: Optional[bool] = None
+
+
+@app.put("/api/cameras/{cid}")
+def cam_update(cid: str, body: CameraPatch):
+    """Sửa camera, giữ nguyên ID và hiệu chỉnh. Đổi nguồn (VD: IP điện thoại mới) thì
+    camera được chạy lại với nguồn mới."""
+    c = _cam(cid)
+    data = body.model_dump(exclude_none=True)
+    for k in ("name", "source"):
+        if k in data:
+            data[k] = data[k].strip()
+            if not data[k]:
+                raise HTTPException(400, "Tên và địa chỉ nguồn không được để trống")
+    stype = data.get("source_type", c["source_type"])
+    if stype not in SOURCE_TYPES:
+        raise HTTPException(400, "Loại nguồn không hợp lệ")
+    source = data.get("source", c["source"])
+    if stype == "file" and not Path(source).is_file():
+        raise HTTPException(400, "Không tìm thấy file video")
+    if stype == "webcam" and not source.isdigit():
+        raise HTTPException(400, "Webcam cần số thứ tự, VD: 0")
+    changed = (stype, source) != (c["source_type"], c["source"])
+    c.update(data)
+    save_cameras()
+    if changed:
+        restart_worker(cid)
+    return cam_view(c)
 
 
 @app.delete("/api/cameras/{cid}")

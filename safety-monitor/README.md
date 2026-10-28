@@ -24,13 +24,54 @@ Lần chạy đầu, Ultralytics tự tải `yolo11n-pose.pt` và `yolo11n.pt` (
 python run.py            # mở http://localhost:8000
 ```
 
-1. Vào **Camera** → chọn *File video* / *Webcam* (nhập `0`) / *Camera IP* (`rtsp://...`) → **Thêm và chạy**.
+1. Vào **Camera** → chọn *File video* / *Webcam* (nhập `0`) / *Camera IP* (`rtsp://...` hoặc `http://...`) → **Thêm và chạy**. Dùng điện thoại làm camera: xem [mục 3](#3-dùng-điện-thoại-làm-camera). Đổi tên, địa chỉ hoặc tùy chọn của camera đã thêm: bấm **Sửa** (giữ nguyên hiệu chỉnh).
 2. (Nên làm) bấm **Hiệu chỉnh**: chọn 4 góc một hình chữ nhật trên nền, nhập kích thước thật (m). Không hiệu chỉnh thì hệ thống tự ước lượng tỉ lệ từ chiều cao người/xe (kém chính xác hơn, có ghi trên giao diện).
 3. Tab **Giám sát** hiển thị luồng đã phân tích và cảnh báo realtime (âm thanh + thông báo trình duyệt).
 4. Tab **Sự kiện**: xem ảnh + clip 6 giây, đánh dấu *Xác nhận / Đã xử lý / Báo nhầm*, xuất CSV.
 5. Tab **Cài đặt**: chỉnh ngưỡng, có hiệu lực ngay.
 
-## 3. Các loại sự kiện
+## 3. Dùng điện thoại làm camera
+
+Điện thoại chạy app phát video qua HTTP, SafeSite đọc như một camera IP. Không cần sửa code.
+
+1. Cài app: **IP Webcam** (Android, cổng `8080`) hoặc **DroidCam** (Android/iPhone, cổng `4747`).
+2. Trong IP Webcam → *Video preferences* → **Video resolution: 640×480**. Mô hình chỉ dùng ảnh 640 px nên độ phân giải cao hơn chỉ làm chậm; trên một số máy (đã gặp với Redmi) để 1920×1080 thì camera không phát khung nào, màn hình xem trước đen.
+3. Bấm **Start server**, ghi lại địa chỉ app hiện, VD `http://192.168.1.25:8080`.
+4. Kiểm tra trên trình duyệt của máy tính: mở `http://192.168.1.25:8080/shot.jpg` phải thấy ảnh.
+5. Dashboard → **Camera** → *Camera IP (RTSP/HTTP)* → địa chỉ **có đuôi `/video`**:
+   - IP Webcam: `http://192.168.1.25:8080/video`
+   - DroidCam: `http://192.168.1.25:4747/video`
+
+| Hiện tượng | Nguyên nhân | Cách xử lý |
+|---|---|---|
+| *Không mở được nguồn video*, ping tới điện thoại thất bại | Hai máy khác mạng, hoặc Wi‑Fi bật chặn thiết bị nói chuyện với nhau (AP isolation – hay gặp ở Wi‑Fi nhà trọ, quán, trường) | Bật **hotspot trên điện thoại**, cho laptop vào hotspot đó; mở lại app để lấy IP mới. Video đi trong mạng nội bộ, không tốn 4G |
+| Mở được trang `http://IP:8080/` nhưng `/shot.jpg` và `/video` treo | Camera không phát khung: độ phân giải không hỗ trợ, app khác đang chiếm camera, app bị hệ điều hành tắt camera khi chạy nền | Giảm độ phân giải xuống 640×480; để app ở màn hình chính; tắt app camera khác; cho app *Không hạn chế pin* |
+| Xem trước trong app màu đen | Quyền camera bị chặn (công tắc *Truy cập camera* ở Trung tâm điều khiển, hoặc quyền của app) | Bật lại quyền, khởi động lại điện thoại |
+| Nhập `http://IP:8080/` không chạy | Đó là trang web của app, không phải luồng video | Thêm đuôi `/video` |
+| Camera đang chạy rồi chuyển *Đang kết nối lại* | Điện thoại rớt mạng / app dừng | Tự chạy tiếp khi có hình lại. Nếu IP điện thoại đã đổi (bật lại hotspot), bấm **Sửa** và nhập IP mới |
+
+Đặt điện thoại cố định, cao ~1–1,5 m, nhìn chéo xuống; cắm sạc. Camera rung làm sai vận tốc → báo nhầm.
+
+### Độ trễ với camera trực tiếp
+
+Camera phát ~30 khung/giây nhưng YOLO trên CPU chỉ xử lý ~6 khung/giây. Nếu đọc khung tuần tự, các khung chưa xử lý xếp hàng trong bộ đệm của OpenCV/FFmpeg và hình bị **trễ dồn**: càng chạy lâu càng chậm, cảnh báo cũng đến muộn theo.
+
+Vì vậy webcam / camera IP được đọc qua `LiveReader` ([app/pipeline.py](app/pipeline.py)): một luồng riêng đọc liên tục và **chỉ giữ khung mới nhất**, vòng phân tích luôn lấy khung hiện tại (khung cũ bị bỏ). Ngoài ra:
+
+- thời điểm `t` của mỗi khung là lúc **nhận được khung**, không phải lúc xử lý xong → vận tốc, TTC chính xác hơn;
+- camera mạng mất hình > 3 s (kể cả lúc bấm Chạy mà điện thoại chưa phát hình) thì chuyển *Đang kết nối lại* và tự mở lại mỗi giây, có hình là chạy tiếp; webcam USB không mở được hoặc mất hình thì báo lỗi;
+- mở/đọc camera mạng có timeout 5 s (mặc định của FFmpeg là 30 s).
+
+File video vẫn đọc tuần tự (không bỏ khung) để kết quả đánh giá lặp lại được.
+
+Đo trên điện thoại thật (IP Webcam 640×480, ~31 FPS, giả lập 150 ms xử lý/khung, chạy 15 s):
+
+| Cách đọc | Độ trễ hình so với thực tế |
+|---|---|
+| Tuần tự (cũ) | ≈ 11,7 s và tăng dần |
+| `LiveReader` | ≈ 17 ms (tối đa 38 ms) + thời gian xử lý một khung |
+
+## 4. Các loại sự kiện
 
 | Mã | Mức | Điều kiện chính |
 |---|---|---|
@@ -41,13 +82,20 @@ python run.py            # mở http://localhost:8000
 | `PERSON_VEHICLE_COLLISION` | Nghiêm trọng | Tiếp xúc (< 0,4 m trên nền + bbox giao nhau) **và** trong 2 s người ngã / bị đẩy / mất dấu; hoặc FALL ≤ 3 s sau khi ở sát xe đang chạy |
 | `VEHICLE_COLLISION` | Nghiêm trọng | Footprint hai xe chạm nhau, trước đó tiến lại gần > 1 m/s, sau đó một xe giảm tốc > 50% hoặc đổi hướng > 30° |
 
-## 4. Kiểm thử và đánh giá
+## 5. Kiểm thử và đánh giá
 
 ```bash
-python -m pytest -q tests                     # 17 kiểm thử: 16 kịch bản giả lập + chấm điểm, không cần GPU/video
+python -m pytest -q tests                     # 40 kiểm thử, không cần GPU/video/camera
 python -m tools.run_video video.mp4 --out out.mp4
 python -m tools.evaluate --labels data/labels.csv --videos data/test_videos --out data/eval
 ```
+
+| File | Nội dung |
+|---|---|
+| `tests/test_scenarios.py` | 16 kịch bản té ngã / va chạm trên dữ liệu giả lập |
+| `tests/test_evaluate.py` | chấm điểm theo sự kiện |
+| `tests/test_live.py` | `LiveReader` với camera giả: luôn trả khung mới nhất, không trả lặp, timeout khi camera treo, tự kết nối lại camera mạng (cả khi lần mở đầu thất bại), webcam không mở được / mất hình thì báo lỗi, dừng luồng đọc |
+| `tests/test_api.py` | API sửa camera: đổi IP giữ ID và hiệu chỉnh, chỉ chạy lại khi nguồn đổi, từ chối dữ liệu sai (tên trống, loại nguồn lạ, webcam không phải số, file không tồn tại) |
 
 `labels.csv` (một dòng cho mỗi sự kiện; video không có sự kiện ghi `NONE`):
 
@@ -67,7 +115,7 @@ python -m tools.make_semisynthetic src.mp4 --frame 50 --box 472,80,556,260 --bg 
 Đánh giá theo **sự kiện**: cảnh báo cùng loại trong `[start − 1 s, end + 3 s]` là TP. Báo cáo Precision, Recall, F1, độ trễ trung bình, FP/giờ.
 Để làm thí nghiệm so sánh A–D, chạy lại với các cấu hình khác nhau và lưu `report.json` của từng lần.
 
-## 5. Cấu trúc mã
+## 6. Cấu trúc mã
 
 ```
 app/
@@ -77,7 +125,7 @@ app/
   analyzers/fall.py       máy trạng thái té ngã trên pose
   analyzers/collision.py  người–xe, xe–xe, TTC, near-miss, xác nhận va chạm
   engine.py        lõi phân tích 1 camera (không phụ thuộc mô hình → test được)
-  pipeline.py      đọc video, YOLO + ByteTrack, luồng xử lý mỗi camera
+  pipeline.py      đọc video (LiveReader cho camera trực tiếp), YOLO + ByteTrack, luồng xử lý mỗi camera
   annotate.py      vẽ khung xương, bbox, khoảng cách, bản đồ mặt nền
   events.py        SQLite, ảnh chụp, clip .webm, WebSocket hub
   main.py          FastAPI: REST, WebSocket, MJPEG
@@ -86,7 +134,7 @@ tools/             evaluate.py, run_video.py
 tests/             bộ giả lập + kịch bản kiểm thử
 ```
 
-## 6. Nhận diện xe nâng, máy xúc (fine-tune)
+## 7. Nhận diện xe nâng, máy xúc (fine-tune)
 
 COCO **không có** lớp forklift/excavator; bản mặc định dùng car/truck/bus/motorcycle/bicycle. Để dùng trong kho/công trường:
 
@@ -100,7 +148,7 @@ yolo detect train model=yolo11n.pt data=construction.yaml epochs=50 imgsz=640
 
 Sau đó đặt đường dẫn `runs/detect/train/weights/best.pt` vào *Cài đặt → Mô hình phát hiện xe* và sửa `VEHICLE_CLASSES`, `CLASS_HEIGHT_M` trong `app/config.py` theo chỉ số và tên lớp mới. Ví dụ với bộ lớp mặc định: `VEHICLE_CLASSES = {0: "forklift", 1: "excavator", ..., 10: "truck"}`.
 
-## 7. Giới hạn đã biết
+## 8. Giới hạn đã biết
 
 - Mô hình COCO nhận diện kém xe nhìn thẳng từ trên xuống (camera trần, drone): khi thử, ô tô nhìn từ trên bị nhận thành “cell phone”. Cần camera nhìn chéo hoặc fine-tune.
 - Footprint xe xấp xỉ bằng 35% phần dưới bbox: đúng nhất khi camera gắn cao, nhìn chéo xuống.

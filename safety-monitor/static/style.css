@@ -63,7 +63,7 @@ main { padding: 20px 24px 40px; min-width: 0; }
 
 .chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
 .chip.critical { background: rgba(239,68,68,.15); color: #fca5a5; border-color: rgba(239,68,68,.4); }
-.chip.warning { background: rgba(245,158,11,.15); color: #fcd34d; border-color: rgba(245,158,11,.4); }
+.chip.warning, .chip.reconnecting { background: rgba(245,158,11,.15); color: #fcd34d; border-color: rgba(245,158,11,.4); }
 .chip.ok, .chip.running { background: rgba(34,197,94,.12); color: #86efac; border-color: rgba(34,197,94,.35); }
 .chip.error { background: rgba(239,68,68,.15); color: #fca5a5; }
 .badge { background: var(--critical); color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700; }
