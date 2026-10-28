@@ -116,6 +116,24 @@
       <button class="btn primary" id="cal-save">Lưu</button></div>
   </div></div></div>
 
+<!-- Modal sửa camera -->
+<div class="modal" id="m-cam"><div class="box">
+  <div class="head"><h2>Sửa camera</h2><button class="btn sm x" data-close>Đóng ✕</button></div>
+  <div class="content">
+    <div class="form">
+      <label class="f">Tên camera<input type="text" id="e-name"></label>
+      <label class="f" id="e-type-wrap">Loại nguồn<select id="e-type"><option value="webcam">Webcam</option><option value="rtsp">Camera IP (RTSP/HTTP)</option></select></label>
+      <label class="f" id="e-src-wrap">Địa chỉ<input type="text" id="e-src"></label>
+    </div>
+    <p class="hint" id="e-hint">Đổi địa chỉ thì camera tự chạy lại với nguồn mới. Hiệu chỉnh mặt nền được giữ nguyên.</p>
+    <div class="row" style="margin-top:12px">
+      <label class="check" id="e-loop-wrap"><input type="checkbox" id="e-loop"> Lặp lại video</label>
+      <label class="check"><input type="checkbox" id="e-auto"> Tự chạy khi khởi động</label>
+      <span class="hint" id="e-msg"></span>
+      <button class="btn primary" id="e-save" style="margin-left:auto">Lưu</button>
+    </div>
+  </div></div></div>
+
 <div class="toasts" id="toasts"></div>
 <script src="/static/app.js"></script>
 </body>

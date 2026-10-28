@@ -1,4 +1,4 @@
-# Dataset phương tiện kho bãi / công trường để fine-tune YOLO (xem README mục 6).
+# Dataset phương tiện kho bãi / công trường để fine-tune YOLO (xem README mục 7).
 #   yolo detect train model=yolo11n.pt data=construction.yaml epochs=50 imgsz=640
 #
 # Cấu trúc thư mục (nhãn định dạng YOLO: "class cx cy w h", toạ độ chuẩn hoá 0–1):
